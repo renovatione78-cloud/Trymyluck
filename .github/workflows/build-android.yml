@@ -1,0 +1,62 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Find and extract project ZIP
+        id: source
+        shell: bash
+        run: |
+          archive="$(find . -maxdepth 2 -type f -iname '*.zip' -not -path './.git/*' -print -quit)"
+          if [ -z "$archive" ]; then
+            echo "Project ZIP was not found in the repository root."
+            exit 1
+          fi
+
+          mkdir -p app-source
+          unzip -q "$archive" -d app-source
+          project_file="$(find app-source -maxdepth 6 -type f -name pubspec.yaml -print -quit)"
+          if [ -z "$project_file" ]; then
+            echo "pubspec.yaml was not found inside the ZIP."
+            exit 1
+          fi
+
+          echo "project_dir=${project_file%/pubspec.yaml}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android project files
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: flutter create --platforms=android --org com.example .
+
+      - name: Resolve packages
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainlearn-android-apk
+          path: ${{ steps.source.outputs.project_dir }}/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
